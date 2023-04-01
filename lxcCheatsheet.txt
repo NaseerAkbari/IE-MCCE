@@ -1,0 +1,178 @@
+#    -*- mode: org -*-
+
+#### LXC (Unprivileged) Container and OverlayFS Cheatsheet. For Debian Bullseye.
+
+* Install software ****************************
+apt update
+apt -y install lxc lxc-templates debootstrap fuse-overlayfs
+
+systemctl stop lxc-net
+systemctl disable lxc-net
+nano /etc/default/lxc
+   # disable lxc-net
+
+* Install network *****************************
+modprobe dummy numdummies=1
+modprobe br_netfilter
+
+echo "dummy" >> /etc/modules
+echo "options dummy numdummies=1" > /etc/modprobe.d/zz-dummy.conf
+echo "br_netfilter" >> /etc/modules
+
+cat <<EOF >>/etc/network/interfaces
+auto br0
+iface br0 inet static
+    bridge_ports dummy0
+    bridge_fd 0
+    address 192.168.9.251
+    netmask 255.255.255.0
+    network 192.168.9.0
+    broadcast 192.168.9.255
+EOF
+
+ifup br0
+
+* Install firewall ****************************
+ wget https://download.the-m.at/cloud/lxcFirewall.sh 
+ nano -v lxcFirewall.sh
+ chmod u+x lxcFirewall.sh
+ ./lxcFirewall.sh
+
+* Configure first container *******************
+echo "192.168.9.1  test1" >> /etc/hosts
+
+mkdir -vp /var/lib/lxc/test1
+chown 100000:root /var/lib/lxc/test1
+chmod 770 /var/lib/lxc/test1
+
+cat <<EOF > /var/lib/lxc/test1/config
+lxc.include = /usr/share/lxc/config/debian.common.conf
+lxc.include = /usr/share/lxc/config/debian.userns.conf
+lxc.arch = amd64
+lxc.idmap = u 0 100000 65536
+lxc.idmap = g 0 100000 65536
+lxc.rootfs.path = /var/lib/lxc/test1/rootfs
+lxc.uts.name = test1
+lxc.net.0.type = veth
+lxc.net.0.flags = up
+lxc.net.0.link = br0
+lxc.net.0.name = eth0
+lxc.net.0.hwaddr = 00:FF:AA:00:00:01
+EOF
+ 
+* Create template and populate overlayFS ******
+  
+mkdir /var/lib/layers
+ 
+lxc-create -n debiantemplate -t debian -P /var/lib/layers -- -r bullseye
+
+* Create and mount overlay ********************
+mkdir -vp /var/lib/layers/test1/diff
+mkdir -vp /var/lib/layers/test1/work
+
+mkdir -vp /var/lib/lxc/test1/rootfs
+
+fuse-overlayfs -o uidmapping=0:100000:65536 \
+               -o gidmapping=0:100000:65536 \
+	       -o lowerdir=/var/lib/layers/debiantemplate/rootfs \
+	       -o upperdir=/var/lib/layers/test1/diff \
+	       -o workdir=/var/lib/layers/test1/work \
+	       /var/lib/lxc/test1/rootfs
+
+# chown -vRf 100000.100000 /var/lib/lxc/test1/rootfs
+# chmod -vf 755 /var/lib/lxc/test1/rootfs
+
+* Configure Container "test1" *****************
+cat <<EOF > /var/lib/lxc/test1/rootfs/etc/network/interfaces
+auto lo
+iface lo inet loopback
+auto eth0
+iface eth0 inet static
+address 192.168.9.1
+netmask 255.255.255.0
+gateway 192.168.9.251
+EOF
+
+cat <<EOF > /var/lib/lxc/test1/rootfs/etc/resolv.conf
+domain lxclan
+search lxclan
+nameserver 185.12.64.2
+nameserver 208.67.222.222
+nameserver 208.67.220.220
+EOF
+
+* Start and Enter Container "test1" ***********
+lxc-start test1
+lxc-ls -f
+lxc-attach test1
+
+        # PATH=root/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        apt update
+	nano /etc/apt/sources.list
+	   # edit bullseye/updates to stable-security
+        apt -y install man less nano mc htop ccze dnsutils multitail screen rsync dnsutils openssh-server exim4-daemon-light rsyslog openssh-server telnet apt-utils ifupdown iputils-ping net-tools wget
+        apt -y clean
+
+	apt -y dist-upgrade
+        apt -y --purge autoremove
+        apt -y clean
+
+exit
+
+* Make current work a new overlay *************
+lxc-stop test1
+
+umount /var/lib/lxc/test1/rootfs
+
+mv /var/lib/layers/test1/diff /var/lib/layers/test1/l1
+mkdir /var/lib/layers/test1/diff
+
+fuse-overlayfs -o uidmapping=0:100000:65536 \
+               -o gidmapping=0:100000:65536 \
+	       -o lowerdir=/var/lib/layers/test1/l1:/var/lib/layers/debiantemplate/rootfs \
+	       -o upperdir=/var/lib/layers/test1/diff \
+	       -o workdir=/var/lib/layers/test1/work \
+	       /var/lib/lxc/test1/rootfs
+
+* Install lighttpd in container "test1"	*******
+lxc-start test1
+lxc-attach test1
+      apt update
+      apt -y install lighttpd
+exit
+
+* Rollback ************************************
+
+lxc-stop test1
+
+umount /var/lib/lxc/test1/rootfs
+
+rm -Rvf /var/lib/layers/test1/diff
+mkdir -vp /var/lib/layers/test1/diff
+
+fuse-overlayfs -o uidmapping=0:100000:65536 \
+               -o gidmapping=0:100000:65536 \
+	       -o lowerdir=/var/lib/layers/test1/l1:/var/lib/layers/debiantemplate/rootfs \
+	       -o upperdir=/var/lib/layers/test1/diff \
+	       -o workdir=/var/lib/layers/test1/work \
+	       /var/lib/lxc/test1/rootfs
+
+lxc-start test1
+  
+* Start creating another container "test2" in an new overlay *
+mkdir -vp /var/lib/layers/test2/diff
+mkdir -vp /var/lib/layers/test2/work
+mkdir -vp /var/lib/lxc/test2/rootfs
+
+fuse-overlayfs -o uidmapping=0:200000:65536 \
+               -o gidmapping=0:200000:65536 \
+	       -o lowerdir=/var/lib/layers/debiantemplate/rootfs \
+	       -o upperdir=/var/lib/layers/test2/diff \
+	       -o workdir=/var/lib/layers/test2/work \
+	       /var/lib/lxc/test2/rootfs
+
+* What have we won? ***************************
+du -shc /var/lib/layers/*
+du -shc /var/lib/lxc/*/rootfs
+  
+
