@@ -39,10 +39,10 @@ echo 0 > /proc/sys/net/ipv6/conf/default/forwarding
 ######################################
 # delete all existing rules.
 #
-iptables -F
-iptables -t nat -F
-iptables -t mangle -F
-iptables -X
+#iptables -F
+#iptables -t nat -F
+#iptables -t mangle -F
+#iptables -X
 
 ###################################### 
 # Rules
