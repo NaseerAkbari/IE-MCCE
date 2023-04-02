@@ -160,6 +160,13 @@ fuse-overlayfs -o uidmapping=0:100000:65536 \
 
 lxc-start test1
   
+
+
+
+
+
+
+  
 * Start creating another container "test2" in an new overlay *
 mkdir -vp /var/lib/layers/test2/diff
 mkdir -vp /var/lib/layers/test2/work

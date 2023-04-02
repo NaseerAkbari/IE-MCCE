@@ -1,178 +1,155 @@
-#    -*- mode: org -*-
+#!/bin/bash -x
 
-#### LXC (Unprivileged) Container and OverlayFS Cheatsheet. For Debian Bullseye.
+IFWAN=`ip route show | grep default | awk '{print $5}'`
+IPWAN=`ip -4 addr show $IFWAN | grep inet | tr ' ' '\n' | grep '/[1-9]' | head -1 | cut -d / -f 1`
 
-* Install software ****************************
-apt update
-apt -y install lxc lxc-templates debootstrap fuse-overlayfs
+IFINT=br0
+IPINT=192.168.9.251
 
-systemctl stop lxc-net
-systemctl disable lxc-net
-nano /etc/default/lxc
-   # disable lxc-net
+IPREJECT=192.168.9.253
+IPDROP=192.168.9.254
 
-* Install network *****************************
-modprobe dummy numdummies=1
-modprobe br_netfilter
+FIRSTCONTAINERIP=192.168.9.1
 
-echo "dummy" >> /etc/modules
-echo "options dummy numdummies=1" > /etc/modprobe.d/zz-dummy.conf
-echo "br_netfilter" >> /etc/modules
+######################################
+# Strictly no IPV6
+######################################
 
-cat <<EOF >>/etc/network/interfaces
-auto br0
-iface br0 inet static
-    bridge_ports dummy0
-    bridge_fd 0
-    address 192.168.9.251
-    netmask 255.255.255.0
-    network 192.168.9.0
-    broadcast 192.168.9.255
-EOF
+ip6tables -F
+ip6tables -t nat -F
+ip6tables -t mangle -F
+ip6tables -X
 
-ifup br0
+ip6tables -P INPUT DROP
+ip6tables -P OUTPUT DROP
+ip6tables -P FORWARD DROP
 
-* Install firewall ****************************
- wget https://download.the-m.at/cloud/lxcFirewall.sh 
- nano -v lxcFirewall.sh
- chmod u+x lxcFirewall.sh
- ./lxcFirewall.sh
+ip6tables -I INPUT -j DROP
+ip6tables -P INPUT DROP
+ip6tables -I OUTPUT -j DROP
+ip6tables -P OUTPUT DROP
+ip6tables -I FORWARD -j DROP
+ip6tables -P FORWARD DROP
 
-* Configure first container *******************
-echo "192.168.9.1  test1" >> /etc/hosts
+# Disable routing.for now
+echo 0 > /proc/sys/net/ipv6/conf/default/forwarding
 
-mkdir -vp /var/lib/lxc/test1
-chown 100000:root /var/lib/lxc/test1
-chmod 770 /var/lib/lxc/test1
+######################################
+# Reset IPV4
+######################################
+# delete all existing rules.
+#
+iptables -F
+iptables -t nat -F
+iptables -t mangle -F
+iptables -X
 
-cat <<EOF > /var/lib/lxc/test1/config
-lxc.include = /usr/share/lxc/config/debian.common.conf
-lxc.include = /usr/share/lxc/config/debian.userns.conf
-lxc.arch = amd64
-lxc.idmap = u 0 100000 65536
-lxc.idmap = g 0 100000 65536
-lxc.rootfs.path = /var/lib/lxc/test1/rootfs
-lxc.uts.name = test1
-lxc.net.0.type = veth
-lxc.net.0.flags = up
-lxc.net.0.link = br0
-lxc.net.0.name = eth0
-lxc.net.0.hwaddr = 00:FF:AA:00:00:01
-EOF
- 
-* Create template and populate overlayFS ******
-  
-mkdir /var/lib/layers
- 
-lxc-create -n debiantemplate -t debian -P /var/lib/layers -- -r bullseye
+###################################### 
+# Rules
+######################################
 
-* Create and mount overlay ********************
-mkdir -vp /var/lib/layers/test1/diff
-mkdir -vp /var/lib/layers/test1/work
+####### BASICS ##########################################################
+### Establich some Reject and Drop Rules for -t nat
+iptables -A FORWARD -d $IPREJECT -j REJECT
+iptables -A INPUT -d $IPREJECT -j REJECT
+iptables -A FORWARD -d $IPDROP -j DROP
+iptables -A INPUT -d $IPDROP -j DROP
 
-mkdir -vp /var/lib/lxc/test1/rootfs
+### Always accept loopback traffic, but only on 127.0.0.1
+iptables -A INPUT -i lo -s 127.0.0.1 -d 127.0.0.1 -j ACCEPT
+iptables -A OUTPUT -o lo -s 127.0.0.1 -d 127.0.0.1 -j ACCEPT
+iptables -A INPUT -i lo -s 127.0.0.0/8 -d 127.0.0.0/8 -j DROP
+iptables -A OUTPUT -o lo -s 127.0.0.0/8 -d 127.0.0.0/8 -j DROP
 
-fuse-overlayfs -o uidmapping=0:100000:65536 \
-               -o gidmapping=0:100000:65536 \
-	       -o lowerdir=/var/lib/layers/debiantemplate/rootfs \
-	       -o upperdir=/var/lib/layers/test1/diff \
-	       -o workdir=/var/lib/layers/test1/work \
-	       /var/lib/lxc/test1/rootfs
+### Accept being ping'ed
+iptables -A INPUT -i $IFWAN -p icmp --icmp-type 8 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -o $IFWAN -p icmp -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-# chown -vRf 100000.100000 /var/lib/lxc/test1/rootfs
-# chmod -vf 755 /var/lib/lxc/test1/rootfs
+### Accept all outgoing traffic from main machine
+iptables -A OUTPUT -o $IFWAN -p tcp -j ACCEPT
+iptables -A OUTPUT -o $IFWAN -p udp -j ACCEPT
+iptables -A OUTPUT -o $IFWAN -p icmp -j ACCEPT
 
-* Configure Container "test1" *****************
-cat <<EOF > /var/lib/lxc/test1/rootfs/etc/network/interfaces
-auto lo
-iface lo inet loopback
-auto eth0
-iface eth0 inet static
-address 192.168.9.1
-netmask 255.255.255.0
-gateway 192.168.9.251
-EOF
+### Accept all incoming traffic to main machine if it belongs to existing connections
+iptables -A INPUT -i $IFWAN -p tcp -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -i $IFWAN -p udp -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -i $IFWAN -p icmp -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-cat <<EOF > /var/lib/lxc/test1/rootfs/etc/resolv.conf
-domain lxclan
-search lxclan
-nameserver 185.12.64.2
-nameserver 208.67.222.222
-nameserver 208.67.220.220
-EOF
+### If something with 192.168.9.x appears at the main interface -> reject it. It shall never be there
+iptables -t nat -A PREROUTING ! -i $IFINT -d 192.168.9.0/24 -j DNAT --to-destination 192.168.9.254
 
-* Start and Enter Container "test1" ***********
-lxc-start test1
-lxc-ls -f
-lxc-attach test1
 
-        # PATH=root/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        apt update
-	nano /etc/apt/sources.list
-	   # edit bullseye/updates to stable-security
-        apt -y install man less nano mc htop ccze dnsutils multitail screen rsync dnsutils openssh-server exim4-daemon-light rsyslog openssh-server telnet apt-utils ifupdown iputils-ping net-tools wget
-        apt -y clean
+####### INCOMING TRAFFIC TO CONTAINERS ######################################
 
-	apt -y dist-upgrade
-        apt -y --purge autoremove
-        apt -y clean
+### Optional: Route Incoming http-Traffic to first container
+# vvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+iptables -t nat -A PREROUTING -p tcp -i $IFWAN -d $IPWAN --dport 80 -j DNAT --to-destination $FIRSTCONTAINERIP:80
+iptables -A FORWARD -p tcp -i $IFWAN -d $FIRSTCONTAINERIP --dport 80 -o $IFINT -j ACCEPT
+iptables -A FORWARD -p tcp -o $IFWAN -s $FIRSTCONTAINERIP --sport 80 -i $IFINT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -t nat -A POSTROUTING -p tcp -o $IFWAN -s $FIRSTCONTAINERIP --sport 80 -j SNAT --to-source $IPWAN:80
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-exit
 
-* Make current work a new overlay *************
-lxc-stop test1
+####### INCOMING TRAFFIC TO MAIN SERVER ######################################
 
-umount /var/lib/lxc/test1/rootfs
+### Accept incoming ssh to main server, but only 4 new connections per second
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 22 -m state --state NEW -m recent --name wan_22 --update --seconds 60 --hitcount 4 -j LOG --log-level info --log-prefix wansshIN
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 22 -m state --state NEW -m recent --name wan_22 --update --seconds 60 --hitcount 4 -j DROP
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 22 -m state --state NEW -m recent --name wan_22 --set 
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 22 -m state --state NEW -j LOG --log-level info --log-prefix wansshBLOCK
 
-mv /var/lib/layers/test1/diff /var/lib/layers/test1/l1
-mkdir /var/lib/layers/test1/diff
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 22 -j ACCEPT
+iptables -A OUTPUT -o $IFWAN -p tcp -s $IPWAN --sport 22 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-fuse-overlayfs -o uidmapping=0:100000:65536 \
-               -o gidmapping=0:100000:65536 \
-	       -o lowerdir=/var/lib/layers/test1/l1:/var/lib/layers/debiantemplate/rootfs \
-	       -o upperdir=/var/lib/layers/test1/diff \
-	       -o workdir=/var/lib/layers/test1/work \
-	       /var/lib/lxc/test1/rootfs
+### Incoming VNC; ONLY FOR VLIZEDLAB
+iptables -A INPUT -i $IFWAN -p tcp -d $IPWAN --dport 5601 -j ACCEPT
+iptables -A OUTPUT -o $IFWAN -p tcp -s $IPWAN --sport 5601 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-* Install lighttpd in container "test1"	*******
-lxc-start test1
-lxc-attach test1
-      apt update
-      apt -y install lighttpd
-exit
 
-* Rollback ************************************
+######### TRAFFIC BETWEEN MAIN MACHINE AND CONTAINERS ####################
 
-lxc-stop test1
+### Accept Traffic from main machine to first container
+iptables -A OUTPUT -o $IFINT -s $IPINT -d $FIRSTCONTAINERIP -j ACCEPT
+iptables -A INPUT -i $IFINT -d $IPINT -s $FIRSTCONTAINERIP -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-umount /var/lib/lxc/test1/rootfs
 
-rm -Rvf /var/lib/layers/test1/diff
-mkdir -vp /var/lib/layers/test1/diff
+######### OUTGOING TRAFFIC FROM CONTAINERS ###############################
 
-fuse-overlayfs -o uidmapping=0:100000:65536 \
-               -o gidmapping=0:100000:65536 \
-	       -o lowerdir=/var/lib/layers/test1/l1:/var/lib/layers/debiantemplate/rootfs \
-	       -o upperdir=/var/lib/layers/test1/diff \
-	       -o workdir=/var/lib/layers/test1/work \
-	       /var/lib/lxc/test1/rootfs
+### Let the first container reach out via TCP Port 80 (http)
+iptables -A FORWARD -p tcp -i $IFINT -s $FIRSTCONTAINERIP --dport 80 -o $IFWAN -j ACCEPT
+iptables -A FORWARD -p tcp -o $IFINT -d $FIRSTCONTAINERIP --sport 80 -i $IFWAN -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -p tcp -o $IFINT -d $FIRSTCONTAINERIP --dport 80 -i $IFWAN -j REJECT
+iptables -t nat -A POSTROUTING -p tcp -s $FIRSTCONTAINERIP --dport 80 -j SNAT --to-source $IPWAN
 
-lxc-start test1
-  
-* Start creating another container "test2" in an new overlay *
-mkdir -vp /var/lib/layers/test2/diff
-mkdir -vp /var/lib/layers/test2/work
-mkdir -vp /var/lib/lxc/test2/rootfs
+### Let the first container reach out via TCP Port 443 (https)
+iptables -A FORWARD -p tcp -i $IFINT -s $FIRSTCONTAINERIP --dport 443 -o $IFWAN -j ACCEPT
+iptables -A FORWARD -p tcp -o $IFINT -d $FIRSTCONTAINERIP --sport 443 -i $IFWAN -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -p tcp -o $IFINT -d $FIRSTCONTAINERIP --dport 443 -i $IFWAN -j REJECT
+iptables -t nat -A POSTROUTING -p tcp -s $FIRSTCONTAINERIP --dport 443 -j SNAT --to-source $IPWAN
 
-fuse-overlayfs -o uidmapping=0:200000:65536 \
-               -o gidmapping=0:200000:65536 \
-	       -o lowerdir=/var/lib/layers/debiantemplate/rootfs \
-	       -o upperdir=/var/lib/layers/test2/diff \
-	       -o workdir=/var/lib/layers/test2/work \
-	       /var/lib/lxc/test2/rootfs
+### Let the first container reach out via UDP Port 53 (DNS)
+iptables -A FORWARD -p udp -i $IFINT -s $FIRSTCONTAINERIP --dport 53 -o $IFWAN -j ACCEPT
+iptables -A FORWARD -p udp -o $IFINT -d $FIRSTCONTAINERIP --sport 53 -i $IFWAN -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -p udp -o $IFINT -d $FIRSTCONTAINERIP --dport 53 -i $IFWAN -j REJECT
+iptables -t nat -A POSTROUTING -p udp -s $FIRSTCONTAINERIP --dport 53 -j SNAT --to-source $IPWAN
 
-* What have we won? ***************************
-du -shc /var/lib/layers/*
-du -shc /var/lib/lxc/*/rootfs
-  
 
+############ CONCLUSION, BLOCK&REJECT RULES  ###############################
+
+### Reject all other traffic from and to the first container
+iptables -A INPUT -i $IFINT -d $IPINT -s $FIRSTCONTAINERIP -j REJECT
+iptables -A OUTPUT -o $IFINT -s $IPINT -d $FIRSTCONTAINERIP -j REJECT
+
+iptables -A FORWARD -s $FIRSTCONTAINERIP -j DROP
+iptables -A FORWARD -d $FIRSTCONTAINERIP -j DROP
+
+# iptables -A INPUT -j LOG --log-prefix DROP
+# iptables -A OUTPUT -j LOG --log-prefix DROP
+# iptables -A FORWARD -j LOG --log-prefix DROP
+
+### Drop everything else
+iptables -A INPUT -j DROP
+iptables -A OUTPUT -j DROP
+iptables -A FORWARD -j DROP
+
+echo 1 > /proc/sys/net/ipv4/ip_forward
