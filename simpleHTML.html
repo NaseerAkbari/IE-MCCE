@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>First Container</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100vh;
+        background: radial-gradient(circle, #16a085, #3498db);
+        overflow: hidden;
+      }
+
+      .circle {
+        position: absolute;
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        animation: circle 10s ease-in-out infinite;
+      }
+
+      @keyframes circle {
+        0% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.5);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      .line {
+        position: absolute;
+        width: 2px;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.2);
+        animation: line 10s ease-in-out infinite;
+      }
+
+      @keyframes line {
+        0% {
+          transform: translate(0, -100%);
+        }
+        50% {
+          transform: translate(0, 100%);
+        }
+        100% {
+          transform: translate(0, -100%);
+        }
+      }
+
+      .centered {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        font-size: 3rem;
+        text-align: center;
+        z-index: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="circle" style="top: 20%; left: 20%;"></div>
+    <div class="circle" style="top: 50%; left: 50%;"></div>
+    <div class="circle" style="top: 80%; left: 80%;"></div>
+    <div class="line" style="left: 25%;"></div>
+    <div class="line" style="left: 50%;"></div>
+    <div class="line" style="left: 75%;"></div>
+    <div class="centered">Welcome to First Container!</div>
+  </body>
+</html>
