@@ -1,5 +1,10 @@
 #!/bin/bash -x
 
+IFWAN=`ip route show | grep default | awk '{print $5}'`
+IPWAN=`ip -4 addr show $IFWAN | grep inet | tr ' ' '\n' | grep '/[1-9]' | head -1 | cut -d / -f 1`
+
+IFINT=br0
+IPINT=192.168.9.251
 SECONDTCONTAINERIP=192.168.9.2
 
 ### Optional: Route Incoming http-Traffic to SECOND container
