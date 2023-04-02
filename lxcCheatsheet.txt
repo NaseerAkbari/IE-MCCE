@@ -83,7 +83,7 @@ fuse-overlayfs -o uidmapping=0:100000:65536 \
 # chown -vRf 100000.100000 /var/lib/lxc/test1/rootfs
 # chmod -vf 755 /var/lib/lxc/test1/rootfs
 
-* Configure Container "test1" *****************
+* Configure Container "test1" try to second cnt too*****************
 cat <<EOF > /var/lib/lxc/test1/rootfs/etc/network/interfaces
 auto lo
 iface lo inet loopback
