@@ -40,6 +40,7 @@ ifup br0
 
 * Configure first container *******************
 echo "192.168.9.1  test1" >> /etc/hosts
+*try this with the second container as well
 
 mkdir -vp /var/lib/lxc/test1
 chown 100000:root /var/lib/lxc/test1
