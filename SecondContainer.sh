@@ -92,7 +92,7 @@ iptables -t nat -A POSTROUTING -p tcp -o $IFWAN -s $FIRSTCONTAINERIP --sport 80 
 iptables -t nat -A PREROUTING -p tcp -i $IFWAN -d $IPWAN --dport 81 -j DNAT --to-destination $SECONDTCONTAINERIP:81
 iptables -A FORWARD -p tcp -i $IFWAN -d $SECONDTCONTAINERIP --dport 81 -o $IFINT -j ACCEPT
 iptables -A FORWARD -p tcp -o $IFWAN -s $SECONDTCONTAINERIP --sport 81 -i $IFINT -m state --state RELATED,ESTABLISHED -j ACCEPT
-iptables -t nat -A POSTROUTING -p tcp -o $IFWAN -s $SECONDTCONTAINERIP --sport 81 -j SNAT --to-source $IPWAN:8
+iptables -t nat -A POSTROUTING -p tcp -o $IFWAN -s $SECONDTCONTAINERIP --sport 81 -j SNAT --to-source $IPWAN:81
 ####### INCOMING TRAFFIC TO MAIN SERVER ######################################
 
 
